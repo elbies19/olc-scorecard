@@ -805,6 +805,7 @@ function App() {
     }
     setStep(1);
   };
+  const updateScore = (sid, i, v) => setScores(p => ({ ...p, [sid]: { ...p[sid], [i]: v } }));
   const updateNote = (sid, i, v) => setNotes(p => ({ ...p, [sid]: { ...p[sid], [i]: v } }));
   const updateNarrative = (sid, field, v) => setNarratives(p => ({ ...p, [sid]: { ...p[sid], [field]: v } }));
 
