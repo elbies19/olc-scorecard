@@ -621,7 +621,7 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
                   </span>
                 </div>
               )}
-              <div style={{ display: "flex", gap: 10, marginTop: 12, paddingLeft: 34, flexWrap: "wrap" }} role="group" aria-labelledby={`obj-${section.id}-${i}`}>
+              <div style={{ display: "flex", gap: 10, marginTop: 12, paddingLeft: 34, flexWrap: "wrap" }} role="group" aria-label={`Score objective ${i + 1}: ${obj}`}>
                 {[0, 1, 2].map(v => <ScoreButton key={v} value={v} selected={score === v} suggested={!hasScore && suggested === v} onChange={(val) => onScoreChange(i, val)} objectiveIndex={`${section.id}-${i}`} />)}
               </div>
               <div style={{ marginTop: 10, paddingLeft: 34 }}>
