@@ -258,17 +258,30 @@ function CriteriaTooltip({ sectionId, index }) {
 }
 
 function ScoreButton({ value, selected, suggested, onChange, objectiveIndex }) {
-  const id = `score-${objectiveIndex}-${value}`;
   const borderStyle = selected ? `2px solid ${scoreColor(value)}` : suggested ? `2px dashed #A0B4C8` : `2px solid ${C.border}`;
   const bg = selected
     ? (value === 0 ? "#FFF0EE" : value === 1 ? "#FFF8E6" : "#EEF7F1")
     : suggested ? "#F0F4F8" : C.white;
+  const textColor = selected ? scoreColor(value) : suggested ? "#5C7A99" : C.textSecondary;
   return (
-    <label htmlFor={id} style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", padding: "8px 14px", borderRadius: 6, border: borderStyle, background: bg, minWidth: 80, transition: "border-color 0.15s, background 0.15s", position: "relative" }}>
-      <input type="radio" id={id} name={`objective-${objectiveIndex}`} value={value} checked={selected} onChange={() => onChange(value)} style={{ position: "absolute", opacity: 0, width: 0, height: 0 }} />
-      <span style={{ fontSize: 22, fontWeight: 700, color: selected ? scoreColor(value) : suggested ? "#5C7A99" : C.textSecondary, lineHeight: 1 }} aria-hidden="true">{value}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: selected ? scoreColor(value) : suggested ? "#5C7A99" : C.textSecondary, textTransform: "uppercase", letterSpacing: "0.04em" }}>{SCORE_LABELS[value]}</span>
-    </label>
+    <button
+      type="button"
+      onClick={() => onChange(value)}
+      aria-pressed={selected}
+      aria-label={`Score ${value} — ${SCORE_LABELS[value]}: ${SCORE_DESCRIPTIONS[value]}`}
+      style={{
+        display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 4,
+        cursor: "pointer", padding: "8px 14px", borderRadius: 6,
+        border: borderStyle, background: bg, minWidth: 80,
+        transition: "border-color 0.15s, background 0.15s",
+        fontFamily: "inherit",
+      }}
+      onFocus={(e) => (e.currentTarget.style.outline = `3px solid ${C.focus}`)}
+      onBlur={(e) => (e.currentTarget.style.outline = "none")}
+    >
+      <span style={{ fontSize: 22, fontWeight: 700, color: textColor, lineHeight: 1 }} aria-hidden="true">{value}</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: textColor, textTransform: "uppercase", letterSpacing: "0.04em" }}>{SCORE_LABELS[value]}</span>
+    </button>
   );
 }
 
