@@ -518,11 +518,20 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
 
   const buildPrompt = (type) => {
     const relevant = section.objectives.map((obj, i) => {
-      const s = scores[i]; const note = notes[i]?.trim();
-      if (s === null || s === undefined) return null;
-      const evidenceLine = (note && note.length >= 15) ? ` | Evidence: "${note}"` : " | Evidence: none provided";
-      return `${i + 1}. [${s} – ${SCORE_LABELS[s]}] ${obj}${evidenceLine}`;
+      const s = scores[i];
+      const note = notes[i]?.trim();
+      const hasNote = note && note.length >= 15;
+      // Include objective if scored OR if it has a meaningful note
+      if ((s === null || s === undefined) && !hasNote) return null;
+      const scoreLabel = (s !== null && s !== undefined) ? `${s} – ${SCORE_LABELS[s]}` : "not yet scored";
+      const evidenceLine = hasNote ? ` | Evidence: "${note}"` : " | Evidence: none provided";
+      return `${i + 1}. [${scoreLabel}] ${obj}${evidenceLine}`;
     }).filter(Boolean).join("\n");
+
+    if (!relevant) {
+      return null;
+    }
+
     const focus = type === "strengths"
       ? "Focus on the highest-scoring objectives that have evidence notes. Reference the evidence notes specifically and directly — do not invent or infer any course details that do not appear in the evidence notes."
       : "Focus on the lowest-scoring objectives that have evidence notes. Reference the evidence notes specifically and directly — do not invent or infer any course details that do not appear in the evidence notes. For objectives where evidence is listed as 'none provided', speak only to the general criterion, not to the specific course.";
@@ -530,14 +539,18 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
   };
 
   const draftStrengths = async () => {
+    const prompt = buildPrompt("strengths");
+    if (!prompt) { onStrengthsChange("Please score at least one objective or add evidence notes before drafting."); return; }
     setDraftingStrengths(true);
-    try { onStrengthsChange(await callClaude(buildPrompt("strengths"))); }
+    try { onStrengthsChange(await callClaude(prompt)); }
     catch (e) { onStrengthsChange("Unable to generate draft. Please write your own narrative here."); }
     setDraftingStrengths(false);
   };
   const draftWeaknesses = async () => {
+    const prompt = buildPrompt("improvements");
+    if (!prompt) { onWeaknessesChange("Please score at least one objective or add evidence notes before drafting."); return; }
     setDraftingWeaknesses(true);
-    try { onWeaknessesChange(await callClaude(buildPrompt("improvements"))); }
+    try { onWeaknessesChange(await callClaude(prompt)); }
     catch (e) { onWeaknessesChange("Unable to generate draft. Please write your own narrative here."); }
     setDraftingWeaknesses(false);
   };
