@@ -126,6 +126,72 @@ async function callClaude(prompt) {
   return text;
 }
 
+async function extractNotesFromDocuments(documents) {
+  // documents: array of { label, type, content } where type is "text" or "pdf_base64"
+  const objectivesList = [
+    ...SECTIONS[0].objectives.map((o, i) => `essential-${i}: [Essential Design ${i+1}] ${o}`),
+    ...SECTIONS[1].objectives.map((o, i) => `advanced-${i}: [Advanced Design ${i+1}] ${o}`),
+    ...SECTIONS[2].objectives.map((o, i) => `delivery-${i}: [Course Delivery ${i+1}] ${o}`),
+  ].join("\n");
+
+  const docDescriptions = documents.map(d => `Document: "${d.label}" (${d.type === "pdf_base64" ? "PDF" : "text"})`).join("\n");
+
+  const messageContent = [];
+
+  // Add document content blocks
+  for (const doc of documents) {
+    if (doc.type === "pdf_base64") {
+      messageContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: doc.content } });
+    } else {
+      messageContent.push({ type: "text", text: `--- Document: "${doc.label}" ---\n${doc.content}\n--- End of document ---` });
+    }
+  }
+
+  messageContent.push({
+    type: "text",
+    text: `You are analyzing course documents to pre-populate evidence notes for an OLC Course Review Scorecard self-assessment.
+
+UPLOADED DOCUMENTS:
+${docDescriptions}
+
+OLC SCORECARD OBJECTIVES:
+${objectivesList}
+
+TASK:
+For each objective above, determine whether the uploaded documents contain direct, specific evidence relevant to that objective. If they do, extract a brief quote or paraphrase (1–2 sentences max) from the document that serves as evidence. If they do not, omit that objective entirely.
+
+CRITICAL RULES:
+- Only include objectives where you found ACTUAL evidence in the documents
+- Quote or closely paraphrase the document — do not infer, interpret, or invent
+- Keep each note under 200 characters
+- Omit any objective where the documents provide no direct evidence
+- Do not evaluate quality — only report what is present
+
+Respond with ONLY a JSON object. No explanation, no markdown, no preamble. Format:
+{
+  "essential": { "0": "note text", "3": "note text" },
+  "advanced": { "2": "note text" },
+  "delivery": {}
+}
+Only include section keys and objective indices where evidence was found.`
+  });
+
+  const response = await fetch("https://olc-scorecard-proxy.briana-schwartz.workers.dev/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "sonnet",
+      messages: [{ role: "user", content: messageContent }]
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(`API ${response.status}: ${JSON.stringify(data)}`);
+  const text = data.content?.[0]?.text;
+  if (!text) throw new Error("No response text");
+  const clean = text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
+}
+
 function CriteriaTooltip({ sectionId, index }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
@@ -243,9 +309,67 @@ function WelcomeView({ onStart }) {
   const [courseName, setCourseName] = useState("");
   const [courseTaught, setCourseTaught] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
+  const [uploads, setUploads] = useState([]); // array of { label, type, content, fileName }
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus(); }, []);
   const canProceed = instructorName.trim() && courseName.trim();
+
+  const FILE_SLOTS = [
+    { id: "syllabus", label: "Syllabus addendum" },
+    { id: "modules", label: "Modules list" },
+    { id: "other", label: "Other document" },
+  ];
+
+  const handleFileChange = async (slotId, slotLabel, file) => {
+    if (!file) {
+      setUploads(prev => prev.filter(u => u.slotId !== slotId));
+      return;
+    }
+    const isPdf = file.type === "application/pdf";
+    const isText = file.type === "text/plain" || file.name.endsWith(".txt");
+    if (!isPdf && !isText) {
+      alert("Please upload a PDF or plain text (.txt) file.");
+      return;
+    }
+    if (isPdf) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target.result.split(",")[1];
+        setUploads(prev => {
+          const filtered = prev.filter(u => u.slotId !== slotId);
+          return [...filtered, { slotId, label: slotLabel, type: "pdf_base64", content: base64, fileName: file.name }];
+        });
+      };
+      reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setUploads(prev => {
+          const filtered = prev.filter(u => u.slotId !== slotId);
+          return [...filtered, { slotId, label: slotLabel, type: "text", content: e.target.result, fileName: file.name }];
+        });
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleStart = async () => {
+    if (uploads.length === 0) {
+      onStart({ instructorName: instructorName.trim(), courseName: courseName.trim(), courseTaught, prefillNotes: null });
+      return;
+    }
+    setExtracting(true);
+    setExtractError("");
+    try {
+      const prefillNotes = await extractNotesFromDocuments(uploads);
+      onStart({ instructorName: instructorName.trim(), courseName: courseName.trim(), courseTaught, prefillNotes });
+    } catch (e) {
+      setExtractError("Document analysis failed — you can still proceed and add notes manually.");
+      setExtracting(false);
+    }
+  };
 
   return (
     <div style={{ maxWidth: 680, margin: "0 auto" }}>
@@ -273,12 +397,12 @@ function WelcomeView({ onStart }) {
               <li><strong style={{ color: C.scoreOne }}>1 – Accomplished:</strong> Meets minimum expectations for quality and effectiveness.</li>
               <li><strong style={{ color: C.scoreTwo }}>2 – Exemplary:</strong> Surpasses standard expectations; demonstrates highly effective practice.</li>
             </ul>
-            <p style={{ marginBottom: 0 }}>Each objective has an <strong>ⓘ button</strong> showing the detailed OLC criteria for each score level. Add evidence notes to at least 2–3 objectives per section to enable AI-assisted narrative drafting.</p>
+            <p style={{ marginBottom: 0 }}>Optionally upload course documents below — the tool will extract evidence notes automatically. Each objective has an <strong>ⓘ button</strong> showing detailed OLC criteria. Add or edit evidence notes to enable AI-assisted narrative drafting.</p>
           </div>
         )}
       </div>
 
-      <fieldset style={{ border: "none", padding: 0, margin: "0 0 28px 0" }}>
+      <fieldset style={{ border: "none", padding: 0, margin: "0 0 24px 0" }}>
         <legend style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 16, padding: 0 }}>Before you begin</legend>
         <div style={{ marginBottom: 16 }}>
           <label htmlFor="instructor-name" style={{ display: "block", fontWeight: 600, fontSize: 14, color: C.textPrimary, marginBottom: 6 }}>Your name</label>
@@ -301,9 +425,55 @@ function WelcomeView({ onStart }) {
         </div>
       </fieldset>
 
-      <button onClick={() => onStart({ instructorName: instructorName.trim(), courseName: courseName.trim(), courseTaught })} disabled={!canProceed}
-        style={{ padding: "12px 28px", background: canProceed ? C.navy : C.border, color: C.white, border: "none", borderRadius: 6, fontSize: 16, fontWeight: 700, cursor: canProceed ? "pointer" : "not-allowed" }}>
-        Begin self-assessment →
+      {/* Document upload section */}
+      <fieldset style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "16px 18px", margin: "0 0 28px 0" }}>
+        <legend style={{ fontSize: 15, fontWeight: 700, color: C.navy, padding: "0 6px" }}>Upload course documents <span style={{ fontWeight: 400, fontSize: 13, color: C.textSecondary }}>(optional)</span></legend>
+        <p style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.6, marginTop: 4, marginBottom: 16 }}>
+          Upload a syllabus addendum, modules list, or other course document. The tool will automatically extract evidence notes for relevant scorecard objectives. PDF and plain text (.txt) only.
+        </p>
+        {FILE_SLOTS.map(slot => {
+          const uploaded = uploads.find(u => u.slotId === slot.id);
+          return (
+            <div key={slot.id} style={{ marginBottom: 14 }}>
+              <label htmlFor={`upload-${slot.id}`} style={{ display: "block", fontWeight: 600, fontSize: 13, color: C.textPrimary, marginBottom: 5 }}>
+                {slot.label}
+              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <input id={`upload-${slot.id}`} type="file" accept=".pdf,.txt,text/plain,application/pdf"
+                  onChange={(e) => handleFileChange(slot.id, slot.label, e.target.files[0])}
+                  style={{ fontSize: 13, color: C.textPrimary, flex: 1, minWidth: 0 }} />
+                {uploaded && (
+                  <span style={{ fontSize: 12, color: C.scoreTwo, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    ✓ {uploaded.fileName}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {uploads.length > 0 && (
+          <p style={{ fontSize: 12, color: C.textSecondary, margin: "8px 0 0 0", lineHeight: 1.5 }}>
+            {uploads.length} document{uploads.length > 1 ? "s" : ""} ready — evidence notes will be extracted when you click Begin.
+          </p>
+        )}
+      </fieldset>
+
+      {extractError && (
+        <div role="alert" style={{ background: "#FFF0EE", border: `1px solid ${C.scoreZero}`, borderRadius: 6, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.scoreZero, lineHeight: 1.6 }}>
+          {extractError} <button onClick={() => { setExtractError(""); onStart({ instructorName: instructorName.trim(), courseName: courseName.trim(), courseTaught, prefillNotes: null }); }}
+            style={{ marginLeft: 8, fontSize: 12, color: C.scoreZero, background: "none", border: "none", cursor: "pointer", fontWeight: 600, textDecoration: "underline" }}>
+            Proceed without document analysis
+          </button>
+        </div>
+      )}
+
+      <button onClick={handleStart} disabled={!canProceed || extracting}
+        style={{ padding: "12px 28px", background: canProceed && !extracting ? C.navy : C.border, color: C.white, border: "none", borderRadius: 6, fontSize: 16, fontWeight: 700, cursor: canProceed && !extracting ? "pointer" : "not-allowed", display: "inline-flex", alignItems: "center", gap: 10 }}>
+        {extracting ? (
+          <><span aria-hidden="true" style={{ display: "inline-block", width: 16, height: 16, border: "2px solid rgba(255,255,255,0.4)", borderTopColor: C.white, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />Analyzing documents…</>
+        ) : (
+          uploads.length > 0 ? "Analyze documents and begin →" : "Begin self-assessment →"
+        )}
       </button>
     </div>
   );
@@ -318,19 +488,20 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, stre
   const sectionScore = sumScores(scores);
   const scoredCount = Object.values(scores).filter(v => v !== null && v !== undefined).length;
   const noteThreshold = section.objectives.length >= 20 ? 3 : 2;
-  const notesCount = Object.values(notes).filter(n => n?.trim().length > 0).length;
+  const notesCount = Object.values(notes).filter(n => n?.trim().length >= 15).length;
   const canDraft = notesCount >= noteThreshold;
 
   const buildPrompt = (type) => {
     const relevant = section.objectives.map((obj, i) => {
       const s = scores[i]; const note = notes[i]?.trim();
       if (s === null || s === undefined) return null;
-      return `${i + 1}. [${s} – ${SCORE_LABELS[s]}] ${obj}${note ? ` | Evidence: "${note}"` : ""}`;
+      const evidenceLine = (note && note.length >= 15) ? ` | Evidence: "${note}"` : " | Evidence: none provided";
+      return `${i + 1}. [${s} – ${SCORE_LABELS[s]}] ${obj}${evidenceLine}`;
     }).filter(Boolean).join("\n");
     const focus = type === "strengths"
-      ? "Focus on the highest-scoring objectives. Where evidence notes exist, reference them specifically. Be affirming and concrete."
-      : "Focus on the lowest-scoring objectives. Where evidence notes exist, reference them to make suggestions actionable. Be constructive and encouraging.";
-    return `You are writing a ${type === "strengths" ? "Strengths" : "Areas for Improvement"} narrative for an OLC Course Review Scorecard self-assessment.\n\nSection: ${section.label}\nInstructor: ${courseInfo.instructorName}\nCourse: ${courseInfo.courseName}\nSection score: ${sectionScore}/${section.maxScore}\n\nScored objectives:\n${relevant}\n\n${focus}\n\nWrite 3–5 sentences in second person, flowing prose, no bullet points. Do not mention numeric scores.`;
+      ? "Focus on the highest-scoring objectives that have evidence notes. Reference the evidence notes specifically and directly — do not invent or infer any course details that do not appear in the evidence notes."
+      : "Focus on the lowest-scoring objectives that have evidence notes. Reference the evidence notes specifically and directly — do not invent or infer any course details that do not appear in the evidence notes. For objectives where evidence is listed as 'none provided', speak only to the general criterion, not to the specific course.";
+    return `You are writing a ${type === "strengths" ? "Strengths" : "Areas for Improvement"} narrative for an OLC Course Review Scorecard self-assessment.\n\nSECTION: ${section.label}\n\nSCORED OBJECTIVES WITH EVIDENCE:\n${relevant}\n\nINSTRUCTIONS:\n${focus}\n\nCRITICAL: Only reference specific course details that appear verbatim in the evidence notes above. Do not fabricate examples, invent course features, or assume anything about the course that isn't explicitly stated in the evidence. Do not use the instructor's name or course name to infer content.\n\nWrite 3–5 sentences in second person ("Your course..."), flowing prose, no bullet points, no markdown headers. Do not mention numeric scores.`;
   };
 
   const draftStrengths = async () => {
@@ -405,7 +576,7 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, stre
       <div style={{ background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 8, padding: "20px", marginBottom: 32 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, marginBottom: 4, marginTop: 0 }}>Section narrative</h3>
         <p style={{ fontSize: 13, color: C.textSecondary, marginBottom: 12, marginTop: 0, lineHeight: 1.6 }}>
-          You can write your own narrative at any time. To use the draft buttons, add evidence notes to at least {noteThreshold} objectives above.
+          You can write your own narrative at any time. To use the draft buttons, add meaningful evidence notes (at least a phrase or sentence) to at least {noteThreshold} objectives above.
         </p>
         <div role="status" aria-live="polite" aria-atomic="true"
           style={{ display: "inline-flex", alignItems: "center", gap: 8, background: canDraft ? "#EEF7F1" : C.white, border: `1.5px solid ${canDraft ? C.scoreTwo : C.border}`, borderRadius: 6, padding: "6px 12px", marginBottom: 16, fontSize: 13, color: canDraft ? C.scoreTwo : C.textSecondary, fontWeight: 600 }}>
@@ -541,7 +712,28 @@ function App() {
   const [narratives, setNarratives] = useState({ essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
   const [notes, setNotes] = useState({ essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
 
-  const updateScore = (sid, i, v) => setScores(p => ({ ...p, [sid]: { ...p[sid], [i]: v } }));
+  const handleStart = (info) => {
+    setCourseInfo(info);
+    if (info.prefillNotes) {
+      // Merge prefilled notes into notes state, marking them as auto-filled
+      setNotes(prev => {
+        const updated = { ...prev };
+        for (const [sectionId, objNotes] of Object.entries(info.prefillNotes)) {
+          if (updated[sectionId]) {
+            const sectionNotes = { ...updated[sectionId] };
+            for (const [idx, note] of Object.entries(objNotes)) {
+              if (note && note.trim().length > 0) {
+                sectionNotes[parseInt(idx)] = `[Auto-filled] ${note}`;
+              }
+            }
+            updated[sectionId] = sectionNotes;
+          }
+        }
+        return updated;
+      });
+    }
+    setStep(1);
+  };
   const updateNote = (sid, i, v) => setNotes(p => ({ ...p, [sid]: { ...p[sid], [i]: v } }));
   const updateNarrative = (sid, field, v) => setNarratives(p => ({ ...p, [sid]: { ...p[sid], [field]: v } }));
 
@@ -564,7 +756,7 @@ function App() {
 
       <main id="main-content" style={{ padding: "32px 24px", minHeight: "calc(100vh - 56px - 48px)" }}>
         {step > 0 && courseInfo && <StepIndicator steps={allSteps} currentStep={step} />}
-        {step === 0 && <WelcomeView onStart={(info) => { setCourseInfo(info); setStep(1); }} />}
+        {step === 0 && <WelcomeView onStart={handleStart} />}
         {step > 0 && step < summaryStep && currentSection && (
           <SectionView section={currentSection} scores={scores[currentSection.id]} onScoreChange={(i, v) => updateScore(currentSection.id, i, v)}
             notes={notes[currentSection.id]} onNoteChange={(i, v) => updateNote(currentSection.id, i, v)}
