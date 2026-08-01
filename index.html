@@ -342,7 +342,7 @@ function StepIndicator({ steps, currentStep }) {
   );
 }
 
-function WelcomeView({ onStart }) {
+function WelcomeView({ onStart, hasSavedSession, onClearSession }) {
   const [instructorName, setInstructorName] = useState("");
   const [courseName, setCourseName] = useState("");
   const [courseTaught, setCourseTaught] = useState("notyet");
@@ -414,6 +414,19 @@ function WelcomeView({ onStart }) {
       <h1 ref={headingRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 800, color: C.navy, marginBottom: 8, outline: "none" }}>OLC Course Review Scorecard</h1>
       <p style={{ fontSize: 15, color: C.textSecondary, lineHeight: 1.7, marginBottom: 20 }}>A self-assessment tool based on the OLC Center for Quality Initiatives Course Review Scorecard. Work through each section at your own pace. When you finish, print or save your completed scorecard as a PDF.</p>
 
+      {hasSavedSession && (
+        <div role="note" style={{ background: C.tealLight, border: `1px solid ${C.teal}`, borderRadius: 8, padding: "14px 18px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <p style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 2px 0" }}>You have a saved session</p>
+            <p style={{ fontSize: 13, color: C.textSecondary, margin: 0 }}>Your previous progress has been restored. Continue where you left off, or start fresh below.</p>
+          </div>
+          <button onClick={onClearSession}
+            style={{ fontSize: 13, fontWeight: 600, color: C.scoreZero, background: "none", border: `1px solid ${C.scoreZero}`, borderRadius: 5, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
+            Clear saved session
+          </button>
+        </div>
+      )}
+
       <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 24, overflow: "hidden" }}>
         <button onClick={() => setHowOpen(v => !v)} aria-expanded={howOpen}
           style={{ width: "100%", background: C.offWhite, border: "none", padding: "14px 18px", textAlign: "left", fontSize: 15, fontWeight: 700, color: C.navy, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -436,7 +449,7 @@ function WelcomeView({ onStart }) {
               <li><strong style={{ color: C.scoreTwo }}>2 – Exemplary:</strong> Surpasses standard expectations; demonstrates highly effective practice.</li>
             </ul>
             <p style={{ marginBottom: 0 }}>Optionally upload course documents below — the tool will extract evidence notes automatically. Each objective has an <strong>ⓘ button</strong> showing detailed OLC criteria. Add or edit evidence notes to enable AI-assisted narrative drafting.</p>
-            <p style={{ marginTop: 12, marginBottom: 4 }}><strong>A note on data handling and appropriate use:</strong> Your scores and written narratives never leave your browser. When you use the document upload or narrative drafting features, the content you submit is sent to Anthropic's API for processing. Anthropic does not use API data to train its models by default — no opt-out required. Uploaded documents are processed and returned; they are not stored by this tool.</p>
+            <p style={{ marginTop: 12, marginBottom: 4 }}><strong>A note on data handling and appropriate use:</strong> Your scores and written narratives are saved locally in your browser using localStorage, so you can close the tab and resume later. They are never transmitted to a server. When you use the document upload or narrative drafting features, the content you submit is sent to Anthropic's API for processing. Anthropic does not use API data to train its models by default — no opt-out required. Uploaded documents are processed and returned; they are not stored by this tool.</p>
             <p style={{ marginTop: 8, marginBottom: 0 }}><strong>This tool is designed to evaluate course design and delivery — not student performance.</strong> Do not upload documents containing student data, including gradebooks, assignment submissions, student emails, or any materials that identify individual students. Uploading such materials may constitute a FERPA violation. Appropriate documents to upload include syllabi, course schedules, module outlines, assignment descriptions, and instructor-created course materials. For questions about data handling, appropriate use, or FERPA compliance, contact your supervisor or the Academic Technology office before proceeding.</p>
           </div>
         )}
@@ -683,7 +696,7 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
   );
 }
 
-function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack }) {
+function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack, onClearSession }) {
   const [improvementPlan, setImprovementPlan] = useState("");
   const [draftingPlan, setDraftingPlan] = useState(false);
   const headingRef = useRef(null);
@@ -817,21 +830,55 @@ function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack }) {
 
       <div style={{ display: "flex", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }} className="no-print">
         <button onClick={onBack} style={{ padding: "11px 22px", background: C.white, color: C.navy, border: `2px solid ${C.navy}`, borderRadius: 6, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-        <button onClick={() => window.print()} style={{ padding: "11px 28px", background: C.teal, color: C.white, border: "none", borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Print / Save as PDF</button>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button onClick={onClearSession} style={{ padding: "11px 22px", background: C.white, color: C.scoreZero, border: `2px solid ${C.scoreZero}`, borderRadius: 6, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Start new review</button>
+          <button onClick={() => window.print()} style={{ padding: "11px 28px", background: C.teal, color: C.white, border: "none", borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Print / Save as PDF</button>
+        </div>
       </div>
     </div>
   );
 }
 
+const STORAGE_KEY = "olc-scorecard-session-v1";
+
+function loadSession() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return null;
+}
+
 function App() {
-  const [step, setStep] = useState(0);
-  const [courseInfo, setCourseInfo] = useState(null);
   const initScores = (s) => Object.fromEntries(s.objectives.map((_, i) => [i, null]));
   const initNotes = (s) => Object.fromEntries(s.objectives.map((_, i) => [i, ""]));
-  const [scores, setScores] = useState({ essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
-  const [narratives, setNarratives] = useState({ essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
-  const [notes, setNotes] = useState({ essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
-  const [suggestedScores, setSuggestedScores] = useState({ essential: {}, advanced: {}, delivery: {} });
+
+  const saved = loadSession();
+
+  const [step, setStep] = useState(saved?.step || 0);
+  const [courseInfo, setCourseInfo] = useState(saved?.courseInfo || null);
+  const [scores, setScores] = useState(saved?.scores || { essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
+  const [narratives, setNarratives] = useState(saved?.narratives || { essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
+  const [notes, setNotes] = useState(saved?.notes || { essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
+  const [suggestedScores, setSuggestedScores] = useState(saved?.suggestedScores || { essential: {}, advanced: {}, delivery: {} });
+
+  // Persist to localStorage on every meaningful state change
+  useEffect(() => {
+    if (!courseInfo) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ step, courseInfo, scores, narratives, notes, suggestedScores }));
+    } catch (e) {}
+  }, [step, courseInfo, scores, narratives, notes, suggestedScores]);
+
+  const clearSession = () => {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    setStep(0);
+    setCourseInfo(null);
+    setScores({ essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
+    setNarratives({ essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
+    setNotes({ essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
+    setSuggestedScores({ essential: {}, advanced: {}, delivery: {} });
+  };
 
   const handleStart = (info) => {
     setCourseInfo(info);
@@ -883,7 +930,7 @@ function App() {
 
       <main id="main-content" style={{ padding: "32px 24px", minHeight: "calc(100vh - 56px - 48px)" }}>
         {step > 0 && courseInfo && <StepIndicator steps={allSteps} currentStep={step} />}
-        {step === 0 && <WelcomeView onStart={handleStart} />}
+        {step === 0 && <WelcomeView onStart={handleStart} hasSavedSession={!!saved} onClearSession={clearSession} />}
         {step > 0 && step < summaryStep && currentSection && (
           <SectionView section={currentSection} scores={scores[currentSection.id]} onScoreChange={(i, v) => updateScore(currentSection.id, i, v)}
             notes={notes[currentSection.id]} onNoteChange={(i, v) => updateNote(currentSection.id, i, v)}
@@ -894,12 +941,12 @@ function App() {
             onNext={() => setStep(s => s + 1)} onBack={() => setStep(s => s - 1)}
             isLast={step === summaryStep - 1} courseInfo={courseInfo} />
         )}
-        {step === summaryStep && <SummaryView courseInfo={courseInfo} allScores={scores} allNotes={notes} narratives={narratives} onBack={() => setStep(s => s - 1)} />}
+        {step === summaryStep && <SummaryView courseInfo={courseInfo} allScores={scores} allNotes={notes} narratives={narratives} onBack={() => setStep(s => s - 1)} onClearSession={clearSession} />}
       </main>
 
       <footer style={{ background: C.navyDark, padding: "12px 24px", fontSize: 12, color: "rgba(255,255,255,0.6)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }} className="no-print">
         <span>Based on the OLC Center for Quality Initiatives Course Review Scorecard (CC BY-NC-SA)</span>
-        <span>Scorecard scores and narratives are stored in your browser only and are cleared when you close the tab. Documents and text submitted for AI-assisted features are transmitted to Anthropic's API for processing. Anthropic does not use API calls for model training by default. <a href="https://privacy.anthropic.com" target="_blank" rel="noopener noreferrer" style={{ color: "rgba(255,255,255,0.5)", textDecoration: "underline" }}>Learn more</a></span>
+        <span>Scorecard scores and narratives are saved locally in your browser and are never transmitted to a server. Documents and text submitted for AI-assisted features are transmitted to Anthropic's API for processing. Anthropic does not use API calls for model training by default. <a href="https://privacy.anthropic.com" target="_blank" rel="noopener noreferrer" style={{ color: "rgba(255,255,255,0.5)", textDecoration: "underline" }}>Learn more</a></span>
       </footer>
     </>
   );
