@@ -342,7 +342,7 @@ function StepIndicator({ steps, currentStep }) {
   );
 }
 
-function WelcomeView({ onStart, hasSavedSession, onClearSession }) {
+function WelcomeView({ onStart, hasSavedSession, onClearSession, onResumeSession, savedCourseInfo }) {
   const [instructorName, setInstructorName] = useState("");
   const [courseName, setCourseName] = useState("");
   const [courseTaught, setCourseTaught] = useState("notyet");
@@ -414,16 +414,22 @@ function WelcomeView({ onStart, hasSavedSession, onClearSession }) {
       <h1 ref={headingRef} tabIndex={-1} style={{ fontSize: 28, fontWeight: 800, color: C.navy, marginBottom: 8, outline: "none" }}>OLC Course Review Scorecard</h1>
       <p style={{ fontSize: 15, color: C.textSecondary, lineHeight: 1.7, marginBottom: 20 }}>A self-assessment tool based on the OLC Center for Quality Initiatives Course Review Scorecard. Work through each section at your own pace. When you finish, print or save your completed scorecard as a PDF.</p>
 
-      {hasSavedSession && (
-        <div role="note" style={{ background: C.tealLight, border: `1px solid ${C.teal}`, borderRadius: 8, padding: "14px 18px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <p style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 2px 0" }}>You have a saved session</p>
-            <p style={{ fontSize: 13, color: C.textSecondary, margin: 0 }}>Your previous progress has been restored. Continue where you left off, or start fresh below.</p>
+      {hasSavedSession && savedCourseInfo && (
+        <div role="note" style={{ background: C.tealLight, border: `1px solid ${C.teal}`, borderRadius: 8, padding: "14px 18px", marginBottom: 20 }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 4px 0" }}>You have a saved session</p>
+          <p style={{ fontSize: 13, color: C.textSecondary, margin: "0 0 12px 0" }}>
+            <strong>{savedCourseInfo.instructorName}</strong> — {savedCourseInfo.courseName}
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={onResumeSession}
+              style={{ fontSize: 13, fontWeight: 700, color: C.white, background: C.teal, border: "none", borderRadius: 5, padding: "8px 16px", cursor: "pointer" }}>
+              Resume session →
+            </button>
+            <button onClick={onClearSession}
+              style={{ fontSize: 13, fontWeight: 600, color: C.scoreZero, background: "none", border: `1px solid ${C.scoreZero}`, borderRadius: 5, padding: "8px 12px", cursor: "pointer" }}>
+              Clear and start fresh
+            </button>
           </div>
-          <button onClick={onClearSession}
-            style={{ fontSize: 13, fontWeight: 600, color: C.scoreZero, background: "none", border: `1px solid ${C.scoreZero}`, borderRadius: 5, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
-            Clear saved session
-          </button>
         </div>
       )}
 
@@ -580,18 +586,18 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
 
   const draftStrengths = async () => {
     const prompt = buildPrompt("strengths");
-    if (!prompt) { onStrengthsChange("Please score at least one objective or add evidence notes before drafting."); return; }
+    if (!prompt) { onStrengthsChange((strengths ? strengths + "\n\n" : "") + "[Please score at least one objective or add evidence notes before drafting.]"); return; }
     setDraftingStrengths(true);
     try { onStrengthsChange(await callClaude(prompt)); }
-    catch (e) { onStrengthsChange("Unable to generate draft. Please write your own narrative here."); }
+    catch (e) { onStrengthsChange((strengths ? strengths + "\n\n" : "") + "[Draft generation failed — please try again or write your own narrative.]"); }
     setDraftingStrengths(false);
   };
   const draftWeaknesses = async () => {
     const prompt = buildPrompt("improvements");
-    if (!prompt) { onWeaknessesChange("Please score at least one objective or add evidence notes before drafting."); return; }
+    if (!prompt) { onWeaknessesChange((weaknesses ? weaknesses + "\n\n" : "") + "[Please score at least one objective or add evidence notes before drafting.]"); return; }
     setDraftingWeaknesses(true);
     try { onWeaknessesChange(await callClaude(prompt)); }
-    catch (e) { onWeaknessesChange("Unable to generate draft. Please write your own narrative here."); }
+    catch (e) { onWeaknessesChange((weaknesses ? weaknesses + "\n\n" : "") + "[Draft generation failed — please try again or write your own narrative.]"); }
     setDraftingWeaknesses(false);
   };
 
@@ -696,8 +702,7 @@ function SectionView({ section, scores, onScoreChange, notes, onNoteChange, sugg
   );
 }
 
-function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack, onClearSession }) {
-  const [improvementPlan, setImprovementPlan] = useState("");
+function SummaryView({ courseInfo, allScores, allNotes, narratives, improvementPlan, onImprovementPlanChange, onBack, onClearSession }) {
   const [draftingPlan, setDraftingPlan] = useState(false);
   const headingRef = useRef(null);
   useEffect(() => { headingRef.current?.focus(); }, []);
@@ -712,8 +717,8 @@ function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack, onCl
     const lowScoring = allObjectives.filter(o => o.score < 2).sort((a, b) => a.score - b.score);
     const list = lowScoring.map(o => `- [${o.section}] Score ${o.score} – ${SCORE_LABELS[o.score]}: ${o.objective}`).join("\n");
     const prompt = `You are helping an instructor complete a course self-assessment using the OLC Course Review Scorecard.\n\nInstructor: ${courseInfo.instructorName}\nCourse: ${courseInfo.courseName}\nTotal score: ${total}/100\n\nObjectives not yet rated Exemplary:\n${list || "All scored objectives were rated Exemplary."}\n\nWrite a concise, encouraging improvement plan (4–6 sentences) that acknowledges overall performance, identifies 2–3 high-priority areas, suggests concrete next steps, and ends on a forward-looking note. Second person, flowing prose, no bullet points, no explicit score numbers.`;
-    try { setImprovementPlan(await callClaude(prompt)); }
-    catch (e) { setImprovementPlan("Unable to generate draft. Please write your improvement plan here."); }
+    try { onImprovementPlanChange(await callClaude(prompt)); }
+    catch (e) { onImprovementPlanChange("Unable to generate draft. Please write your improvement plan here."); }
     setDraftingPlan(false);
   };
 
@@ -821,7 +826,7 @@ function SummaryView({ courseInfo, allScores, allNotes, narratives, onBack, onCl
         <div className="no-print">
           <DraftButton onClick={draftPlan} loading={draftingPlan} label="Draft improvement plan" />
         </div>
-        <textarea id="improvement-plan" aria-label="Improvement plan" value={improvementPlan} onChange={(e) => setImprovementPlan(e.target.value)} rows={6} className="print-hide no-print"
+        <textarea id="improvement-plan" aria-label="Improvement plan" value={improvementPlan} onChange={(e) => onImprovementPlanChange(e.target.value)} rows={6} className="print-hide no-print"
           placeholder="Describe your plan for improving this course based on your self-assessment results…"
           style={{ width: "100%", padding: "10px 12px", border: `2px solid ${C.border}`, borderRadius: 6, fontSize: 14, color: C.textPrimary, resize: "vertical", fontFamily: "inherit", lineHeight: 1.6, boxSizing: "border-box" }}
           onFocus={(e) => (e.target.style.borderColor = C.focus)} onBlur={(e) => (e.target.style.borderColor = C.border)} />
@@ -855,24 +860,40 @@ function App() {
 
   const saved = loadSession();
 
-  const [step, setStep] = useState(saved?.step || 0);
-  const [courseInfo, setCourseInfo] = useState(saved?.courseInfo || null);
+  // Always start at welcome screen — session is restored only on explicit Resume
+  const [step, setStep] = useState(0);
+  const [courseInfo, setCourseInfo] = useState(null);
   const [scores, setScores] = useState(saved?.scores || { essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
   const [narratives, setNarratives] = useState(saved?.narratives || { essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
   const [notes, setNotes] = useState(saved?.notes || { essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
   const [suggestedScores, setSuggestedScores] = useState(saved?.suggestedScores || { essential: {}, advanced: {}, delivery: {} });
+  const [improvementPlan, setImprovementPlan] = useState(saved?.improvementPlan || "");
 
   // Persist to localStorage on every meaningful state change
   useEffect(() => {
     if (!courseInfo) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ step, courseInfo, scores, narratives, notes, suggestedScores }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ step, courseInfo, scores, narratives, notes, suggestedScores, improvementPlan }));
     } catch (e) {}
-  }, [step, courseInfo, scores, narratives, notes, suggestedScores]);
+  }, [step, courseInfo, scores, narratives, notes, suggestedScores, improvementPlan]);
 
   const clearSession = () => {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
     setStep(0);
+    setCourseInfo(null);
+    setScores({ essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
+    setNarratives({ essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
+    setNotes({ essential: initNotes(SECTIONS[0]), advanced: initNotes(SECTIONS[1]), delivery: initNotes(SECTIONS[2]) });
+    setSuggestedScores({ essential: {}, advanced: {}, delivery: {} });
+    setImprovementPlan("");
+  };
+
+  const resumeSession = () => {
+    if (saved?.courseInfo) {
+      setCourseInfo(saved.courseInfo);
+      setStep(saved.step || 1);
+    }
+  };
     setCourseInfo(null);
     setScores({ essential: initScores(SECTIONS[0]), advanced: initScores(SECTIONS[1]), delivery: initScores(SECTIONS[2]) });
     setNarratives({ essential: { strengths: "", weaknesses: "" }, advanced: { strengths: "", weaknesses: "" }, delivery: { strengths: "", weaknesses: "" } });
@@ -930,7 +951,7 @@ function App() {
 
       <main id="main-content" style={{ padding: "32px 24px", minHeight: "calc(100vh - 56px - 48px)" }}>
         {step > 0 && courseInfo && <StepIndicator steps={allSteps} currentStep={step} />}
-        {step === 0 && <WelcomeView onStart={handleStart} hasSavedSession={!!saved} onClearSession={clearSession} />}
+        {step === 0 && <WelcomeView onStart={handleStart} hasSavedSession={!!saved} onClearSession={clearSession} onResumeSession={resumeSession} savedCourseInfo={saved?.courseInfo} />}
         {step > 0 && step < summaryStep && currentSection && (
           <SectionView section={currentSection} scores={scores[currentSection.id]} onScoreChange={(i, v) => updateScore(currentSection.id, i, v)}
             notes={notes[currentSection.id]} onNoteChange={(i, v) => updateNote(currentSection.id, i, v)}
@@ -941,7 +962,7 @@ function App() {
             onNext={() => setStep(s => s + 1)} onBack={() => setStep(s => s - 1)}
             isLast={step === summaryStep - 1} courseInfo={courseInfo} />
         )}
-        {step === summaryStep && <SummaryView courseInfo={courseInfo} allScores={scores} allNotes={notes} narratives={narratives} onBack={() => setStep(s => s - 1)} onClearSession={clearSession} />}
+        {step === summaryStep && <SummaryView courseInfo={courseInfo} allScores={scores} allNotes={notes} narratives={narratives} improvementPlan={improvementPlan} onImprovementPlanChange={setImprovementPlan} onBack={() => setStep(s => s - 1)} onClearSession={clearSession} />}
       </main>
 
       <footer style={{ background: C.navyDark, padding: "12px 24px", fontSize: 12, color: "rgba(255,255,255,0.6)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }} className="no-print">
